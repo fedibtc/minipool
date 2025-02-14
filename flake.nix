@@ -12,25 +12,27 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    advisory-db = {
+      url = "github:rustsec/advisory-db";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, crane, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, crane, rust-overlay, advisory-db }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        
+
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        
-        # Build dependencies
-        buildInputs = with pkgs; [];
-        nativeBuildInputs = with pkgs; [ pkg-config ];
+        src = craneLib.cleanCargoSource ./.;
 
-        # Runtime dependencies
-        runtimeDependencies = with pkgs; [ openssl ];
+        # Build dependencies
+        buildInputs = [];
+        nativeBuildInputs = with pkgs; [ pkg-config ];
 
         # Common arguments that are used for both checking and building
         commonArgs = {
@@ -63,6 +65,36 @@
         };
       in
       {
+        checks = {
+          # Build the crates as part of `nix flake check` for convenience
+          inherit minipool;
+
+          # Run clippy (and deny all warnings) on the workspace source,
+          # again, reusing the dependency artifacts from above.
+          minipool-clippy = craneLib.cargoClippy (commonArgs // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          });
+
+          minipool-doc = craneLib.cargoDoc (commonArgs // {
+            inherit cargoArtifacts;
+          });
+
+          # Check formatting
+          minipool-fmt = craneLib.cargoFmt {
+            inherit src;
+          };
+
+          minipool-toml-fmt = craneLib.taploFmt {
+            src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
+          };
+
+          # Audit dependencies
+          minipool-audit-dependencies = craneLib.cargoAudit {
+            inherit src advisory-db;
+          };
+        };
+
         packages = {
           inherit minipool minipool_image;
           default = minipool;
@@ -72,8 +104,8 @@
           drv = minipool;
         };
 
-        devShells.default = pkgs.mkShell {
-          inputsFrom = [ minipool ];
+        devShells.default = craneLib.devShell {
+          checks = self.checks.${system};
           
           packages = with pkgs; [
             # Rust toolchain
@@ -210,4 +242,4 @@
             };
           };
       };
-} 
+}
