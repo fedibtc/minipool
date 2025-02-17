@@ -29,7 +29,7 @@ jobs:
           nix build -L .#minipool
       - name: Build fedimint-observer
         run: |
-          nix build -L .#minipool_image
+          nix build -L .#minipool-image
           echo "minipool_image_tag=$(docker load < result | awk '{ print $3 }')" >> $GITHUB_ENV
       - name: Log in to the Container registry
         uses: docker/login-action@v3.2.0

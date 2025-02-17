@@ -48,15 +48,15 @@
             inherit cargoArtifacts;
           }
         );
-        minipool_image = pkgs.dockerTools.buildLayeredImage {
+        minipool-image = pkgs.dockerTools.buildLayeredImage {
           name = "minipool";
           contents = [
             minipool
             pkgs.bash
             pkgs.coreutils
-            pkgs.busybox
             pkgs.curl
-          ];
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.busybox ];
+
           config = {
             Cmd = [
               "${minipool}/bin/minipool"
@@ -96,7 +96,7 @@
         };
 
         packages = {
-          inherit minipool minipool_image;
+          inherit minipool minipool-image;
           default = minipool;
         };
 
