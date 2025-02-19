@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::middleware;
 use axum::routing::MethodRouter;
 use axum::{
     extract::{Path, State},
@@ -19,6 +20,10 @@ use clap::Parser;
 use std::convert::Infallible;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
+
+use self::metrics::track_metrics;
+
+mod metrics;
 
 /// Confirmation targets for fee estimation offered by mempool.space and blockstream.info
 const CONFIRMATION_TARGETS: &[u16] = &[
@@ -44,6 +49,14 @@ struct Config {
     /// Bind address for the HTTP server
     #[arg(long, env = "BIND_ADDR", default_value = "127.0.0.1:3000")]
     bind_addr: SocketAddr,
+
+    #[arg(
+        long,
+        env = "PROMETHEUS_BIND_ADDR",
+        default_value = "[::]:3001",
+        help = "Prometheus address to bind/listen to"
+    )]
+    prometheus_bind_addr: SocketAddr,
 }
 
 #[derive(Clone)]
@@ -59,6 +72,14 @@ async fn main() -> Result<()> {
     let config = Config::parse();
     info!("Starting minipool with config: {:?}", config);
 
+    let metrics_server = metrics::start_metrics_server(config.prometheus_bind_addr);
+    let main_server = start_main_server(config);
+
+    tokio::try_join!(metrics_server, main_server)?;
+    Ok(())
+}
+
+async fn start_main_server(config: Config) -> Result<()> {
     let rpc = Client::new(
         &config.bitcoin_rpc_url,
         Auth::UserPass(config.bitcoin_rpc_user, config.bitcoin_rpc_pass),
@@ -102,6 +123,7 @@ async fn main() -> Result<()> {
     let app = app
         .fallback(fallback)
         .layer(TraceLayer::new_for_http())
+        .route_layer(middleware::from_fn(track_metrics))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
